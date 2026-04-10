@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-Run fetch + normalize against the live Cula API and print a diagnostic
-summary.  Use this to validate that real data matches your assumptions
-before building rules.
+Run the full verification pipeline (fetch → normalize → rules) against
+the live Cula API and print a diagnostic summary.
 
 Usage:
     python example/live_demo.py                 # first sink
@@ -19,6 +18,7 @@ from uuid import UUID
 from cula import CulaClient
 from cula.verification.fetch import fetch_sink_data
 from cula.verification.normalize import normalize
+from cula.verification.rules import RuleConfig, run_rules
 
 
 def _print_separator(label: str) -> None:
@@ -81,6 +81,17 @@ def inspect_one(client: CulaClient, sink_id: UUID) -> None:
     _print_separator("PROOF FILES")
     print(f"  unique cloudStorageIds seen: {len(ctx.cloud_storage_ids_seen)}")
 
+    # --- rule engine -------------------------------------------------------
+    checks = run_rules(ctx, RuleConfig())
+    fails = [c for c in checks if c.severity == "fail"]
+    warns = [c for c in checks if c.severity == "warn"]
+    infos = [c for c in checks if c.severity == "info"]
+
+    _print_separator(f"RULE RESULTS ({len(fails)} fail, {len(warns)} warn, {len(infos)} info)")
+    for c in checks:
+        icon = {"fail": "✗", "warn": "⚠", "info": "✓"}.get(c.severity, "?")
+        print(f"  {icon} [{c.severity:4s}] {c.code:22s}  {c.message}")
+
     if result.errors:
         _print_separator(f"FETCH ERRORS ({len(result.errors)})")
         for err in result.errors:
@@ -92,14 +103,18 @@ def inspect_one(client: CulaClient, sink_id: UUID) -> None:
 def overview(client: CulaClient, sink_ids: list[UUID], limit: int = 5) -> None:
     """Print a one-line summary per sink."""
     _print_separator(f"OVERVIEW (first {min(limit, len(sink_ids))} sinks)")
+    cfg = RuleConfig()
     for sid in sink_ids[:limit]:
         result = fetch_sink_data(client, sid)
         ctx = normalize(result)
-        errs = f"  errors={len(result.errors)}" if result.errors else ""
+        checks = run_rules(ctx, cfg)
+        n_fail = sum(1 for c in checks if c.severity == "fail")
+        n_warn = sum(1 for c in checks if c.severity == "warn")
+        errs = f"  fetch_errors={len(result.errors)}" if result.errors else ""
         print(
             f"  {sid}  events={len(ctx.events):2d}  "
             f"series={len(ctx.series):2d}  "
-            f"proofIds={len(ctx.cloud_storage_ids_seen):3d}  "
+            f"fail={n_fail} warn={n_warn}  "
             f"net={ctx.net_impact_kg or 0:.1f}kg{errs}"
         )
     print()
@@ -107,7 +122,7 @@ def overview(client: CulaClient, sink_ids: list[UUID], limit: int = 5) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Run fetch + normalize on live sinks and print diagnostics."
+        description="Run the full verification pipeline on live sinks and print diagnostics."
     )
     parser.add_argument(
         "sink_id", nargs="?", metavar="UUID",
