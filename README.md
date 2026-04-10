@@ -22,6 +22,12 @@ For regenerating Pydantic models from the OpenAPI file:
 pip install -e ".[dev]"
 ```
 
+For the sink graph visualization example:
+
+```bash
+pip install -e ".[viz]"
+```
+
 ## Usage
 
 ```python
@@ -69,6 +75,21 @@ Types live in `cula.models` (e.g. `Sink`, `MachineDpRequest`, `MachineDataInRang
   ```bash
   python example/fetch_sink.py
   python example/fetch_sink.py 10375aa3-b4b0-4543-900c-d83f163babd9
+  ```
+
+- **`example/visualize_sink_graph.py`** — Loads a sink and writes a PNG of a **flow layout**: the sink is on the **far right**, and other entities spread **left** in layers by graph distance (with light barycentric ordering to reduce crossings). Node labels use display names (organisations, sites, materials, containers, lifecycle events, LCA entities). Uses NetworkX and Matplotlib (`pip install -e ".[viz]"`).
+
+  ```bash
+  python example/visualize_sink_graph.py -o sink_graph.png
+  python example/visualize_sink_graph.py 10375aa3-b4b0-4543-900c-d83f163babd9 -o my_sink.png
+  ```
+
+- **`example/build_sink_graph.py`** — Builds the same NetworkX graph as `cula.sink_graph.build_entity_graph`, prints node/edge counts by kind, and optionally writes **JSON** (node-link), **GraphML**, or **GEXF** (`-o` / `--format`). Core dependency is NetworkX; no matplotlib required.
+
+  ```bash
+  python example/build_sink_graph.py
+  python example/build_sink_graph.py -o sink.json
+  python example/build_sink_graph.py --format graphml -o sink.graphml
   ```
 
 - **`regenerate_models.sh`** (repository root) — Regenerates `cula/models.py` from `openapi/cula.openapi.json` (requires `pip install -e ".[dev]"` and a working `.venv`). Reapplies a small post-process fix for a datamodel-codegen quirk on `EventInfo.event`.
