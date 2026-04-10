@@ -12,6 +12,7 @@ dependencies = [
     "httpx>=0.27",
     "networkx>=3.2",
     "pydantic>=2.6",
+    "python-dateutil>=2.9",
 ]
 
 [project.optional-dependencies]

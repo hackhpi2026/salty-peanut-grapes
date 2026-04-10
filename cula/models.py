@@ -4,11 +4,14 @@
 
 from __future__ import annotations
 
+import re
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 from uuid import UUID
 
-from pydantic import AwareDatetime, BaseModel, Field, RootModel
+from dateutil import parser as dateutil_parser
+from pydantic import AwareDatetime, BaseModel, Field, RootModel, field_validator
 
 
 class ValidationState(Enum):
@@ -733,6 +736,21 @@ class EventProof(BaseModel):
         ..., description="When this proof was recorded (ISO 8601)."
     )
     type: Type5 = Field(..., description="Discriminator for the proof type.")
+
+    @field_validator("timestamp", mode="before")
+    @classmethod
+    def coerce_proof_timestamp(cls, v: Any) -> Any:
+        """Accept locale-style datetimes the API sometimes returns (e.g. with TZ names in parentheses)."""
+        if not isinstance(v, str):
+            return v
+        s = re.sub(r"\s*\([^)]*\)\s*$", "", v.strip())
+        try:
+            dt = dateutil_parser.parse(s)
+        except (ValueError, TypeError, OverflowError):
+            return v
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
     proofConfigs: list[ProofConfig] = Field(
         ...,
         description="Configurations describing what aspects of the event this proof covers.",
