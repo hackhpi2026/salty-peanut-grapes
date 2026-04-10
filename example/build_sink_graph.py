@@ -20,6 +20,33 @@ from cula import CulaClient
 from cula.sink_graph import build_entity_graph, graph_summary, sink_title
 
 
+def _graph_for_xml_export(G: nx.DiGraph) -> nx.DiGraph:
+    """
+    GraphML/GEXF only accept scalar attribute values. ``registry`` (dict) and
+    ``aggregated_links`` (list of dicts) are JSON-stringified.
+    """
+    H = G.copy()
+    for _n, d in H.nodes(data=True):
+        reg = d.get("registry")
+        if isinstance(reg, dict):
+            d["registry_json"] = json.dumps(reg, ensure_ascii=False)
+            del d["registry"]
+        for k in list(d.keys()):
+            v = d[k]
+            if isinstance(v, (dict, list)):
+                d[k] = json.dumps(v, ensure_ascii=False)
+    for _u, _v, d in H.edges(data=True):
+        links = d.get("aggregated_links")
+        if isinstance(links, list):
+            d["aggregated_links_json"] = json.dumps(links, ensure_ascii=False)
+            del d["aggregated_links"]
+        for k in list(d.keys()):
+            v = d[k]
+            if isinstance(v, (dict, list)):
+                d[k] = json.dumps(v, ensure_ascii=False)
+    return H
+
+
 def _write_graph(G: nx.DiGraph, path: Path, fmt: str) -> None:
     fmt = fmt.lower()
     if fmt == "json":
@@ -27,10 +54,10 @@ def _write_graph(G: nx.DiGraph, path: Path, fmt: str) -> None:
         path.write_text(json.dumps(data, indent=2), encoding="utf-8")
         return
     if fmt == "graphml":
-        nx.write_graphml(G, path)
+        nx.write_graphml(_graph_for_xml_export(G), path)
         return
     if fmt == "gexf":
-        nx.write_gexf(G, path)
+        nx.write_gexf(_graph_for_xml_export(G), path)
         return
     raise ValueError(f"Unknown format: {fmt!r}")
 
