@@ -83,6 +83,16 @@ python_best_practices = [
 # - Scoring aggregates rule outputs into a heuristic confidence band or
 #   0–100 score with explicit "heuristic" labeling — never claim calibrated
 #   probability.
+# - score() lives in scoring.py.  It starts at 100, subtracts per-rule
+#   weighted penalties, clamps 0–100, maps to a band, attaches top_reasons.
+# - Rule weights by tier (RULE_WEIGHTS dict):
+#     Tier 1 (critical): MACHINE_COVERAGE=25, TEMP_PLAUSIBLE=22, PROOF_PRESENCE=20
+#     Tier 2 (important): TIMELINE_ORDER=15, MASS_BALANCE=15, SITE_CONTINUITY=12
+#     Tier 3 (supporting): DELIVERY_DISTANCE=8, FILE_REUSE=5
+# - fail subtracts the full weight; warn subtracts weight * 0.4.
+# - Confidence bands: 76–100 high, 51–75 medium, 0–50 low.
+# - VerificationReport is the final output: sink_id, counts, score, band,
+#   top_reasons (ordered by penalty weight), plus the full checks list.
 
 # ---------------------------------------------------------------------------
 # Testing

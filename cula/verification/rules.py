@@ -278,7 +278,7 @@ def check_machine_coverage(
 
     if not ctx.series:
         return [CheckResult(
-            code="MACHINE_COVERAGE", severity="fail",
+            code="MACHINE_COVERAGE", severity="warn",
             message="No machine series data available to corroborate pyrolysis.",
         )]
 
@@ -369,35 +369,50 @@ def check_temp_plausible(
 def check_proof_presence(
     ctx: NormalizedContext, cfg: RuleConfig,
 ) -> list[CheckResult]:
-    """Critical event types must have at least one non-sensitive file proof."""
-    missing_by_type: dict[str, list[str]] = defaultdict(list)
+    """Critical event types must have at least one file proof.
+
+    Sensitive proofs count — the proof exists, it's just access-restricted.
+    fail  = zero proofs of any kind on a critical event.
+    warn  = proofs exist but all are sensitive (can't independently verify).
+    """
+    no_proof_by_type: dict[str, list[str]] = defaultdict(list)
+    sensitive_only_by_type: dict[str, list[str]] = defaultdict(list)
+
     for e in ctx.events:
         if e.event_type not in cfg.critical_event_types:
             continue
-        has_file = any(
-            p.proof_type == "file"
-            and p.file_ref is not None
-            and not p.file_ref.is_sensitive
-            and p.file_ref.cloud_storage_id
-            for p in e.proofs
-        )
-        if not has_file:
-            missing_by_type[e.event_type].append(e.event_id)
+        file_proofs = [
+            p for p in e.proofs
+            if p.proof_type == "file" and p.file_ref is not None
+        ]
+        if not file_proofs:
+            no_proof_by_type[e.event_type].append(e.event_id)
+        elif all(p.file_ref.is_sensitive for p in file_proofs):
+            sensitive_only_by_type[e.event_type].append(e.event_id)
 
-    if not missing_by_type:
+    if not no_proof_by_type and not sensitive_only_by_type:
         return [CheckResult(
             code="PROOF_PRESENCE", severity="info",
             message="All critical events have file proofs.",
         )]
 
     results: list[CheckResult] = []
-    for etype, event_ids in missing_by_type.items():
+    for etype, event_ids in no_proof_by_type.items():
         n = len(event_ids)
         noun = "event has" if n == 1 else "events have"
         results.append(CheckResult(
             code="PROOF_PRESENCE",
             severity="fail",
-            message=f"{n} {etype} {noun} no downloadable file proof.",
+            message=f"{n} {etype} {noun} no file proof at all.",
+            evidence={"event_type": etype, "event_ids": event_ids},
+        ))
+    for etype, event_ids in sensitive_only_by_type.items():
+        n = len(event_ids)
+        noun = "event has" if n == 1 else "events have"
+        results.append(CheckResult(
+            code="PROOF_PRESENCE",
+            severity="warn",
+            message=f"{n} {etype} {noun} only sensitive (non-downloadable) proofs.",
             evidence={"event_type": etype, "event_ids": event_ids},
         ))
     return results

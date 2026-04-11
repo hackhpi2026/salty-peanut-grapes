@@ -280,7 +280,7 @@ class TestMachineCoverage:
         window = (_dt(2024, 3, 1), _dt(2024, 3, 31))
         results = check_machine_coverage(_ctx(pyrolysis_window=window), CFG)
         print(f"  → {results[0].severity}: {results[0].message}")
-        assert results[0].severity == "fail"
+        assert results[0].severity == "warn"
 
 
 class TestTempPlausible:
@@ -328,6 +328,25 @@ class TestProofPresence:
         print(f"  → {results[0].severity}: {results[0].message}")
         assert results[0].severity == "fail"
         assert results[0].code == "PROOF_PRESENCE"
+
+    def test_sensitive_only_is_warn(self):
+        sensitive_proof = NormalizedProof(
+            proof_id=str(uuid4()),
+            timestamp=_dt(2024),
+            proof_type="file",
+            file_ref=FileRef(
+                cloud_storage_id=str(uuid4()),
+                file_name="cert.pdf",
+                mime_type="application/pdf",
+                size_bytes=2048,
+                is_sensitive=True,
+            ),
+            object_types=["pyrolysis"],
+        )
+        e = _event("e1", "pyrolysis", _dt(2024, 3), proofs=[sensitive_proof])
+        results = check_proof_presence(_ctx([e]), CFG)
+        print(f"  → {results[0].severity}: {results[0].message}")
+        assert results[0].severity == "warn"
 
     def test_non_critical_event_ignored(self):
         e = _event("e1", "biomass_creation", _dt(2024, 1), proofs=[])

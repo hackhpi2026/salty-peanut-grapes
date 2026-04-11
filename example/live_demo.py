@@ -4,9 +4,10 @@ Run the full verification pipeline (fetch → normalize → rules) against
 the live Cula API and print a diagnostic summary.
 
 Usage:
-    python example/live_demo.py                 # first sink
-    python example/live_demo.py <UUID>          # specific sink
-    python example/live_demo.py --all           # first 5 sinks (overview)
+    python live_demo.py                 # first sink
+    python live_demo.py <UUID>          # specific sink
+    python live_demo.py --all           # all sinks (overview)
+    python live_demo.py --all --limit 5 # first 5 sinks only
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from cula import CulaClient
 from cula.verification.fetch import fetch_sink_data
 from cula.verification.normalize import normalize
 from cula.verification.rules import RuleConfig, run_rules
+from cula.verification.scoring import score
 
 
 def _print_separator(label: str) -> None:
@@ -92,6 +94,16 @@ def inspect_one(client: CulaClient, sink_id: UUID) -> None:
         icon = {"fail": "✗", "warn": "⚠", "info": "✓"}.get(c.severity, "?")
         print(f"  {icon} [{c.severity:4s}] {c.code:22s}  {c.message}")
 
+    # --- scoring -----------------------------------------------------------
+    report = score(sink_id, checks)
+    _print_separator("CONFIDENCE SCORE")
+    print(f"  score:  {report.confidence_score}/100  ({report.confidence_band})")
+    print(f"  counts: {report.counts}")
+    if report.top_reasons:
+        print(f"  top reasons:")
+        for r in report.top_reasons:
+            print(f"    → {r}")
+
     if result.errors:
         _print_separator(f"FETCH ERRORS ({len(result.errors)})")
         for err in result.errors:
@@ -100,21 +112,22 @@ def inspect_one(client: CulaClient, sink_id: UUID) -> None:
     print()
 
 
-def overview(client: CulaClient, sink_ids: list[UUID], limit: int = 5) -> None:
+def overview(client: CulaClient, sink_ids: list[UUID], limit: int | None = None) -> None:
     """Print a one-line summary per sink."""
-    _print_separator(f"OVERVIEW (first {min(limit, len(sink_ids))} sinks)")
+    sink_ids = sink_ids[:limit] if limit else sink_ids
+    _print_separator(f"OVERVIEW ({len(sink_ids)} sinks)")
     cfg = RuleConfig()
-    for sid in sink_ids[:limit]:
+    for sid in sink_ids:
         result = fetch_sink_data(client, sid)
         ctx = normalize(result)
         checks = run_rules(ctx, cfg)
-        n_fail = sum(1 for c in checks if c.severity == "fail")
-        n_warn = sum(1 for c in checks if c.severity == "warn")
+        report = score(sid, checks)
         errs = f"  fetch_errors={len(result.errors)}" if result.errors else ""
         print(
             f"  {sid}  events={len(ctx.events):2d}  "
             f"series={len(ctx.series):2d}  "
-            f"fail={n_fail} warn={n_warn}  "
+            f"score={report.confidence_score:3d} ({report.confidence_band:6s})  "
+            f"fail={report.counts['fail']} warn={report.counts['warn']}  "
             f"net={ctx.net_impact_kg or 0:.1f}kg{errs}"
         )
     print()
@@ -130,7 +143,11 @@ def main() -> int:
     )
     parser.add_argument(
         "--all", action="store_true",
-        help="Print a one-line overview for the first 5 sinks",
+        help="Print a one-line overview for all sinks",
+    )
+    parser.add_argument(
+        "--limit", type=int, default=None, metavar="N",
+        help="With --all: only show the first N sinks",
     )
     args = parser.parse_args()
 
@@ -141,7 +158,7 @@ def main() -> int:
             return 1
 
         if args.all:
-            overview(client, ids)
+            overview(client, ids, limit=args.limit)
             return 0
 
         if args.sink_id:
