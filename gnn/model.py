@@ -24,6 +24,36 @@ from torch_geometric.nn import GINEConv
 from torch_geometric.nn.models.mlp import MLP
 
 
+def _map_feature_error_to_suspicion(
+    feature_error: Tensor,
+    *,
+    reference_max_error: float | None = None,
+) -> Tensor:
+    """
+    Map raw feature reconstruction error to 0..100 suspiciousness.
+
+    The mapping is anchored at 0 error and scaled by a max reference:
+    - 0 means not suspicious (no feature reconstruction error)
+    - 100 means at/above the chosen maximum reference error
+
+    If ``reference_max_error`` is not provided, the current graph max is used.
+    """
+    if feature_error.numel() == 0:
+        return feature_error
+    if reference_max_error is None:
+        max_ref = torch.max(feature_error)
+    else:
+        max_ref = torch.tensor(
+            float(reference_max_error),
+            dtype=feature_error.dtype,
+            device=feature_error.device,
+        )
+    if torch.isclose(max_ref, torch.zeros_like(max_ref)):
+        return torch.zeros_like(feature_error)
+    suspiciousness = (feature_error / max_ref) * 100.0
+    return suspiciousness.clamp(0.0, 100.0)
+
+
 def reparameterize(mu: Tensor, logvar: Tensor) -> Tensor:
     std = torch.exp(0.5 * logvar)
     eps = torch.randn_like(std)
@@ -185,6 +215,7 @@ def anomaly_report(
     relations: list[str],
     top_k_edges: int = 25,
     top_k_nodes: int = 15,
+    feature_error_reference_max: float | None = None,
 ) -> dict[str, Any]:
     """
     Rank edges and nodes by local reconstruction error (structure + features).
@@ -197,6 +228,10 @@ def anomaly_report(
 
     x = data.x
     feat_err = (out.x_recon - x).pow(2).sum(dim=-1)
+    feat_suspicion = _map_feature_error_to_suspicion(
+        feat_err,
+        reference_max_error=feature_error_reference_max,
+    )
 
     pos_bce = F.binary_cross_entropy_with_logits(
         out.edge_presence_logit,
@@ -239,7 +274,8 @@ def anomaly_report(
     for n in nodes_ranked:
         entry: dict[str, Any] = {
             "id": node_ids[n],
-            "score": float(feat_err[n].item()),
+            "score": float(feat_suspicion[n].item()),
+            "feature_error_raw": float(feat_err[n].item()),
         }
         if kinds is not None:
             entry["kind"] = str(kinds[n])
@@ -248,6 +284,8 @@ def anomaly_report(
     return {
         "anomalous_edges": anom_edges,
         "anomalous_nodes": anom_nodes,
+        "all_node_feature_error_raw": feat_err.detach().cpu().tolist(),
+        "max_feature_error_raw": float(torch.max(feat_err).item()),
         "graph_reconstruction_loss": float(
             feat_err.mean().item()
             + edge_score.mean().item()

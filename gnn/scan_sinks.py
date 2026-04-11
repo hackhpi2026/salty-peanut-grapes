@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,23 @@ if str(_REPO_ROOT) not in sys.path:
 
 from gnn.model import SinkGraphVAE, anomaly_report  # noqa: E402
 from gnn.train import json_to_data  # noqa: E402
+
+
+def _percentile(values: list[float], p: float) -> float:
+    """Linear-interpolated percentile for p in [0, 1]."""
+    if not values:
+        return 0.0
+    if len(values) == 1:
+        return float(values[0])
+    q = max(0.0, min(1.0, p))
+    sv = sorted(float(v) for v in values)
+    rank = (len(sv) - 1) * q
+    lo = int(math.floor(rank))
+    hi = int(math.ceil(rank))
+    if lo == hi:
+        return sv[lo]
+    weight = rank - lo
+    return sv[lo] * (1.0 - weight) + sv[hi] * weight
 
 
 def _styles() -> tuple[str, str, str, str, str]:
@@ -152,6 +170,25 @@ def main() -> None:
         print("No graphs scored.", file=sys.stderr)
         sys.exit(1)
 
+    all_feature_errors: list[float] = []
+    for rep in reports:
+        all_feature_errors.extend(
+            float(v) for v in rep.get("all_node_feature_error_raw", [])
+        )
+    global_max_feature_error = max(all_feature_errors) if all_feature_errors else 0.0
+    feature_error_reference_p95 = _percentile(all_feature_errors, 0.95)
+
+    if feature_error_reference_p95 > 0:
+        for rep in reports:
+            for nd in rep.get("anomalous_nodes", []):
+                raw = float(nd.get("feature_error_raw", 0.0))
+                nd["score"] = max(
+                    0.0,
+                    min(100.0, (raw / feature_error_reference_p95) * 100.0),
+                )
+    for rep in reports:
+        rep.pop("all_node_feature_error_raw", None)
+
     losses.sort(key=lambda t: t[1], reverse=True)
     n = len(losses)
     frac = max(0.0, min(0.5, args.alert_fraction))
@@ -211,6 +248,9 @@ def main() -> None:
         payload = {
             "checkpoint": str(args.checkpoint),
             "data_dir": str(args.data),
+            "feature_error_reference_method": "p95_across_all_scanned_nodes",
+            "feature_error_reference_p95_raw": feature_error_reference_p95,
+            "global_max_feature_error_raw": global_max_feature_error,
             "alert_fraction": frac,
             "min_graph_loss": args.min_graph_loss,
             "elevated_files": sorted(alert_paths),

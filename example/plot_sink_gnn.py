@@ -79,6 +79,25 @@ def main() -> int:
     parser.add_argument("--top-k-edges", type=int, default=12)
     parser.add_argument("--top-k-nodes", type=int, default=8)
     parser.add_argument(
+        "--scan-report",
+        type=Path,
+        default=None,
+        help=(
+            "Optional scan_sinks JSON report. If set, use "
+            "feature_error_reference_p95_raw (fallback: global_max_feature_error_raw) "
+            "for cross-sink 0-100 node scoring."
+        ),
+    )
+    parser.add_argument(
+        "--feature-error-reference-max",
+        type=float,
+        default=None,
+        help=(
+            "Optional explicit max feature error used to map node suspicion to 0-100. "
+            "Overrides --scan-report."
+        ),
+    )
+    parser.add_argument(
         "-o",
         "--output",
         type=Path,
@@ -142,6 +161,24 @@ def main() -> int:
 
     data = data.to(device)
     data.node_kind = data.node_kinds
+
+    feature_error_reference_max: float | None = args.feature_error_reference_max
+    if feature_error_reference_max is None and args.scan_report is not None:
+        if not args.scan_report.is_file():
+            print(f"Scan report not found: {args.scan_report}", file=sys.stderr)
+            return 1
+        scan_payload = json.loads(args.scan_report.read_text(encoding="utf-8"))
+        raw_ref = scan_payload.get("feature_error_reference_p95_raw")
+        if raw_ref is None:
+            raw_ref = scan_payload.get("global_max_feature_error_raw")
+        if raw_ref is None:
+            print(
+                "Scan report has no feature_error_reference_p95_raw or global_max_feature_error_raw.",
+                file=sys.stderr,
+            )
+            return 1
+        feature_error_reference_max = float(raw_ref)
+
     with torch.no_grad():
         out = model(data.x, data.edge_index, data.edge_attr)
     rep = anomaly_report(
@@ -151,6 +188,7 @@ def main() -> int:
         relations=relations,
         top_k_edges=args.top_k_edges,
         top_k_nodes=args.top_k_nodes,
+        feature_error_reference_max=feature_error_reference_max,
     )
     loss = rep["graph_reconstruction_loss"]
 
@@ -163,6 +201,11 @@ def main() -> int:
 
     print(f"Source: {source_label}")
     print(f"Checkpoint: {args.checkpoint}")
+    if feature_error_reference_max is not None:
+        print(
+            "feature_error_reference_max="
+            f"{feature_error_reference_max:.6f} (cross-sink scale)"
+        )
     print(f"graph_reconstruction_loss={loss:.4f}")
     print(f"Top {args.top_k_edges} anomalous edges (reconstruction):")
     for e in rep["anomalous_edges"]:
