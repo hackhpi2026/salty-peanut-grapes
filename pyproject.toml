@@ -15,6 +15,9 @@ dependencies = [
     "python-dateutil>=2.9",
 ]
 
+[project.scripts]
+cula = "cula.cli:main"
+
 [project.optional-dependencies]
 dev = [
     "datamodel-code-generator>=0.25",
